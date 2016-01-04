@@ -46,4 +46,30 @@
             android:text="@string/send" />
     </LinearLayout>
 
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="10dp"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/getLockIdBtn"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="获取锁具ID"/>
+        <Button
+            android:id="@+id/downGuJianBtn"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginLeft="5dp"
+            android:text="固件下载"/>
+    </LinearLayout>
+
+    <ProgressBar
+        android:id="@+id/progressbar"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:max="100"/>
+
 </LinearLayout>

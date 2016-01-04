@@ -25,10 +25,12 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
 
+import com.example.android.common.XXTEA;
 import com.example.android.common.logger.Log;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InterruptedIOException;
 import java.io.OutputStream;
 import java.util.UUID;
 
@@ -47,10 +49,10 @@ public class BluetoothChatService {
     private static final String NAME_INSECURE = "BluetoothChatInsecure";
 
     // Unique UUID for this application
-    private static final UUID MY_UUID_SECURE =
-            UUID.fromString("fa87c0d0-afac-11de-8a39-0800200c9a66");
-    private static final UUID MY_UUID_INSECURE =
-            UUID.fromString("8ce255c0-200a-11e0-ac64-0800200c9a66");
+    private static final UUID MY_UUID_SECURE = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
+//            UUID.fromString("fa87c0d0-afac-11de-8a39-0800200c9a66");
+    private static final UUID MY_UUID_INSECURE = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
+//            UUID.fromString("8ce255c0-200a-11e0-ac64-0800200c9a66");
 
     // Member fields
     private final BluetoothAdapter mAdapter;
@@ -247,9 +249,13 @@ public class BluetoothChatService {
         synchronized (this) {
             if (mState != STATE_CONNECTED) return;
             r = mConnectedThread;
+            // Perform the write synchronized
+            r.write(out);
+            BluetoothChatFragment.frame_status = BluetoothChatFragment.FR_SEND_SUCCESS;
         }
-        // Perform the write unsynchronized
-        r.write(out);
+//        // Perform the write unsynchronized
+//        r.write(out);
+//        BluetoothChatFragment.frame_status = BluetoothChatFragment.FR_SEND_SUCCESS;
     }
 
     /**
@@ -448,12 +454,19 @@ public class BluetoothChatService {
         private final BluetoothSocket mmSocket;
         private final InputStream mmInStream;
         private final OutputStream mmOutStream;
+        byte[] buffer = new byte[1024];
+        private final ShareValue shareValue;
+        private ListeningThread listeningThread;
+        private boolean flag = true;
 
         public ConnectedThread(BluetoothSocket socket, String socketType) {
             Log.d(TAG, "create ConnectedThread: " + socketType);
             mmSocket = socket;
             InputStream tmpIn = null;
             OutputStream tmpOut = null;
+
+            shareValue = new ShareValue(0, 0, buffer);
+            listeningThread = new ListeningThread(shareValue);
 
             // Get the BluetoothSocket input and output streams
             try {
@@ -469,18 +482,17 @@ public class BluetoothChatService {
 
         public void run() {
             Log.i(TAG, "BEGIN mConnectedThread");
-            byte[] buffer = new byte[1024];
-            int bytes;
-
+            listeningThread.start();
             // Keep listening to the InputStream while connected
-            while (true) {
+            while (flag) {
                 try {
                     // Read from the InputStream
-                    bytes = mmInStream.read(buffer);
+                    if (!__lock.isUsing()) {
+                        __lock.use();
+                        shareValue.bytes = mmInStream.read(shareValue.buffer);
+                        shareValue.times++;
+                    }
 
-                    // Send the obtained bytes to the UI Activity
-                    mHandler.obtainMessage(Constants.MESSAGE_READ, bytes, -1, buffer)
-                            .sendToTarget();
                 } catch (IOException e) {
                     Log.e(TAG, "disconnected", e);
                     connectionLost();
@@ -510,10 +522,106 @@ public class BluetoothChatService {
 
         public void cancel() {
             try {
+                if (listeningThread != null) {
+                    listeningThread.cancel();
+                    listeningThread = null;
+                }
+                flag = false;
                 mmSocket.close();
             } catch (IOException e) {
                 Log.e(TAG, "close() of connect socket failed", e);
             }
+        }
+    }
+
+    public class ListeningThread extends Thread {
+        private int totalBytes;
+        private int lastTimes;
+        private byte[] buffer = new byte[1024];
+        private final ShareValue shareValue;
+        private boolean flag = true;
+        private int waitTimes = 0;
+
+        public ListeningThread(ShareValue shareValue) {
+            this.shareValue = shareValue;
+            this.lastTimes = shareValue.times;
+            this.totalBytes = 0;
+        }
+
+        private void _wait(long milliseconds) {
+            try {
+                Thread.sleep(milliseconds);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
+
+        @Override
+        public void run() {
+            while (flag) {
+
+                if (__lock.isUsing()) {
+                    synchronized (shareValue) {
+                        if (lastTimes == shareValue.times) {
+                            if (totalBytes >= BluetoothChatFragment.FRAME_SIZE) {
+                                mHandler.obtainMessage(Constants.MESSAGE_READ, totalBytes, BluetoothChatFragment.FR_RECV_SUCCESS, buffer)
+                                        .sendToTarget();
+                                totalBytes = 0;
+                            } else {
+                                // 等待30ms
+                                if (waitTimes == 0) {
+                                    _wait(50);
+                                    waitTimes++;
+                                } else if (waitTimes == 1) { // 等待一次之后还是没有收到数据，则释放锁,数据帧置0
+                                    waitTimes = 0;
+                                    totalBytes = 0;
+                                    mHandler.obtainMessage(Constants.MESSAGE_END, -1, BluetoothChatFragment.FR_RECV_FAILED)
+                                        .sendToTarget();
+                                }
+                            }
+                        } else if (lastTimes == shareValue.times - 1) {
+                            for (int i = 0; i < shareValue.bytes; i++) {
+                                buffer[i + totalBytes] = shareValue.buffer[i];
+                            }
+                            lastTimes = shareValue.times;
+                            totalBytes += shareValue.bytes;
+                            waitTimes = 0;
+                            __lock.unused();
+                        }
+                    }
+                }
+            }
+        }
+
+        public void cancel() {
+            flag = false;
+        }
+    }
+
+    private class ShareValue{
+        private int times;
+        private int bytes;
+        private byte[] buffer;
+        public ShareValue(int times, int bytes, byte[] buffer) {
+            this.times = times;
+            this.bytes = bytes;
+            this.buffer = buffer;
+        }
+    }
+
+    /**
+     * 同步锁
+     */
+    static class __lock {
+        private static boolean isUsing = false;
+        public synchronized static void use(){
+            isUsing = true;
+        }
+        private synchronized static void unused(){
+            isUsing = false;
+        }
+        private static boolean isUsing(){
+            return isUsing;
         }
     }
 }
