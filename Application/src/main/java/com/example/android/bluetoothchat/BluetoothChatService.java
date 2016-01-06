@@ -41,6 +41,7 @@ import java.util.UUID;
  * thread for performing data transmissions when connected.
  */
 public class BluetoothChatService {
+    public static volatile int wait_milliseconds = 50;
     // Debugging
     private static final String TAG = "BluetoothChatService";
 
@@ -566,13 +567,14 @@ public class BluetoothChatService {
                             if (totalBytes >= BluetoothChatFragment.FRAME_SIZE) {
                                 mHandler.obtainMessage(Constants.MESSAGE_READ, totalBytes, BluetoothChatFragment.FR_RECV_SUCCESS, buffer)
                                         .sendToTarget();
+                                Log.d(TAG, "MESSAGE_READ");
                                 totalBytes = 0;
                             } else {
                                 // 等待30ms
-                                if (waitTimes == 0) {
+                                if (waitTimes < 100) {
                                     _wait(50);
                                     waitTimes++;
-                                } else if (waitTimes == 1) { // 等待一次之后还是没有收到数据，则释放锁,数据帧置0
+                                } else { // 等待一次之后还是没有收到数据，则释放锁,数据帧置0
                                     waitTimes = 0;
                                     totalBytes = 0;
                                     mHandler.obtainMessage(Constants.MESSAGE_END, -1, BluetoothChatFragment.FR_RECV_FAILED)

@@ -80,6 +80,7 @@ public class BluetoothChatFragment extends Fragment {
     private Button mSendButton;
     private Button mGetLockIdBtn;
     private Button mDownGujianBtn;
+    private Button mVerifyGujianBtn;
 
     private ProgressBar progressBar;
 
@@ -192,6 +193,7 @@ public class BluetoothChatFragment extends Fragment {
         mConversationView = (ListView) view.findViewById(R.id.in);
         mOutEditText = (EditText) view.findViewById(R.id.edit_text_out);
         mSendButton = (Button) view.findViewById(R.id.button_send);
+        mVerifyGujianBtn = (Button) view.findViewById(R.id.verifyGujianBtn);
         mGetLockIdBtn = (Button) view.findViewById(R.id.getLockIdBtn);
         mDownGujianBtn = (Button) view.findViewById(R.id.downGuJianBtn);
         progressBar = (ProgressBar) view.findViewById(R.id.progressbar);
@@ -209,6 +211,14 @@ public class BluetoothChatFragment extends Fragment {
             public void onClick(View v) {
                 commandType = Command.CommandType.GET_ID;
                 sendMessage(XXTEA.encrypt(Command.getCmd(commandType)));
+            }
+        });
+
+        mVerifyGujianBtn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                commandType = Command.CommandType.VERIFY_GJ;
+                sendGujian();
             }
         });
     }
@@ -409,6 +419,18 @@ public class BluetoothChatFragment extends Fragment {
                     mHandler.obtainMessage(20).sendToTarget();
                     commandType = Command.CommandType.DOWN_GJ;
                     sendGujian();
+                    Log.d(TAG, "resend "+curPage);
+                }
+                break;
+            case VERIFY_GJ:
+                if ( frame_status == FR_SEND_SUCCESS ) {
+                    // 失败重发
+                    curPos -= temp;
+                    curPage --;
+                    mHandler.obtainMessage(20).sendToTarget();
+                    commandType = Command.CommandType.VERIFY_GJ;
+                    sendGujian();
+                    Log.d(TAG, "resend "+curPage);
                 }
                 break;
         }
@@ -450,6 +472,7 @@ public class BluetoothChatFragment extends Fragment {
                 System.arraycopy(data, 0, buffer16, 0, FRAME_SIZE);
                 System.arraycopy(XXTEA.decrypt(buffer16), 0, buffer16, 0, FRAME_SIZE);
                 if (Command.isOK(commandType, buffer16)) {
+                    commandType = Command.CommandType.DOWN_GJ;
                     sendGujian();
                     // 数据帧数据置初始化状态
                     frameId = -1;
@@ -482,6 +505,45 @@ public class BluetoothChatFragment extends Fragment {
                     }
                 }
                 break;
+            case VERIFY_GJ:
+                System.arraycopy(data, 0, buffer16, 0, FRAME_SIZE);
+                System.arraycopy(XXTEA.decrypt(buffer16), 0, buffer16, 0, FRAME_SIZE);
+                if (Command.isOK(commandType, buffer16)) {
+                    frame_status = FR_NONE;
+                    if (curPos != total) {
+                        sendGujian();
+                        // 数据帧数据置初始化状态
+                        frameId = -1;
+                        frameNum = -1;
+                    } else {
+                        Toast.makeText(getContext(), "校验成功", Toast.LENGTH_LONG).show();
+                        try {
+                            inputStream.close();
+                        } catch (IOException e) {
+                            e.printStackTrace();
+                        } finally {
+                            inputStream = null;
+                        }
+                        commandType = Command.CommandType.NONE;
+                        // 数据帧数据置初始化状态
+                        frameId = -1;
+                        frameNum = -1;
+                    }
+                } else {
+                    Toast.makeText(getContext(), "校验失败", Toast.LENGTH_LONG).show();
+                    try {
+                        inputStream.close();
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    } finally {
+                        inputStream = null;
+                    }
+                    commandType = Command.CommandType.NONE;
+                    // 数据帧数据置初始化状态
+                    frameId = -1;
+                    frameNum = -1;
+                }
+                break;
         }
     }
 
@@ -489,8 +551,7 @@ public class BluetoothChatFragment extends Fragment {
         frame_status = FR_SENDING;
         try {
             if (inputStream == null) {
-                inputStream = getResources().openRawResource(R.raw.lock);
-                commandType = Command.CommandType.DOWN_GJ;
+                inputStream = getResources().openRawResource(R.raw.lock2);
                 total = inputStream.available();
                 total -= 24;
                 totalPage = (int)(total/PAGE_SIZE) + (total%PAGE_SIZE==0?0:1);
@@ -504,9 +565,7 @@ public class BluetoothChatFragment extends Fragment {
                 curPos = 0;
             }
 
-            commandType = Command.CommandType.DOWN_GJ;
-
-            System.arraycopy(Command.getCmd(Command.CommandType.DOWN_GJ), 0, buffer16, 0, FRAME_SIZE);
+            System.arraycopy(Command.getCmd(commandType), 0, buffer16, 0, FRAME_SIZE);
             Command.attachLengthInfo(buffer16, totalPage, curPage);
             System.arraycopy(buffer16, 0, buffer144, 0, 8);
 
@@ -540,6 +599,7 @@ public class BluetoothChatFragment extends Fragment {
                 curPos = total;
             }
             curPage++;
+            Log.d(TAG, "sendGujian curPage="+curPage);
             mHandler.obtainMessage(20).sendToTarget();
         } catch (IOException e) {
             e.printStackTrace();
